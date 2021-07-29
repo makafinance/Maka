@@ -1,5 +1,3 @@
-// File: MakaContract.sol
-
 // SPDX-License-Identifier: MIT
 
 /**
@@ -14,8 +12,7 @@
  *  Telegram: https://t.me/MakaFinance
  *  Twitter: https://twitter.com/MakaFinance
  *  
- */                                                
-
+ */
 
 pragma solidity 0.8.5;
 
@@ -31,11 +28,18 @@ contract Maka is MakaBase {
 	uint256 private _totalBNBLiquidityAddedFromFees; // The total number of BNB added to the pool through fees
 	uint256 private _totalBNBClaimed; // The total number of BNB claimed by all addresses
 	uint256 private _totalBNBAsMakaClaimed; // The total number of BNB that was converted to Maka and claimed by all addresses
+	uint256 private _totalBNBAsBusdClaimed; // The total number of BNB that was converted to BUSD and claimed by all addresses
+	
 	mapping(address => uint256) private _bnbRewardClaimed; // The amount of BNB claimed by each address
+	mapping(address => uint256) private _bnbAsBusdClaimed; // The amount of BNB converted to BNB and claimed by each address
 	mapping(address => uint256) private _bnbAsMakaClaimed; // The amount of BNB converted to Maka and claimed by each address
+	
 	mapping(address => bool) private _addressesExcludedFromRewards; // The list of addresses excluded from rewards
 	mapping(address => mapping(address => bool)) private _rewardClaimApprovals; //Used to allow an address to claim rewards on behalf of someone else
-	mapping(address => uint256) private _claimRewardAsTokensPercentage; //Allows users to optionally use a % of the reward pool to buy Maka automatically
+	mapping(address => uint256) private _claimRewardAsBnbPercentage; //Allows users to optionally use a % of the reward pool to receive Bnb automatically
+	mapping(address => uint256) private _claimRewardAsBusdPercentage; //Allows users to optionally use a % of the reward pool to receive Busd automatically
+	mapping(address => uint256) private _claimRewardAsMakaPercentage; //Allows users to optionally use a % of the reward pool to buy Maka automatically
+	
 	uint256 private _minRewardBalance; //The minimum balance required to be eligible for rewards
 	uint256 private _maxClaimAllowed = 100 ether; // Can only claim up to 100 bnb at a time.
 	uint256 private _globalRewardDampeningPercentage = 3; // Rewards are reduced by 3% at the start to fill the main BNB pool faster and ensure consistency in rewards
@@ -59,10 +63,10 @@ contract Maka is MakaBase {
 	uint256 private _sendWeiGasLimit;
 	bool private _excludeNonHumansFromRewards = true;
 
-	event RewardClaimed(address recipient, uint256 amountBnb, uint256 amountTokens, uint256 nextAvailableClaimDate); 
+	event RewardClaimed(address recipient, uint256 amountBnb, uint256 amountBusd, uint256 amountMaka, uint256 nextAvailableClaimDate); 
 	event Burned(uint256 bnbAmount);
 
-	constructor (address routerAddress) MakaBase(routerAddress) {
+	constructor (address routerAddress, address busdAddr) MakaBase(routerAddress, busdAddr) {
 		// Exclude addresses from rewards
 		_addressesExcludedFromRewards[BURN_WALLET] = true;
 		_addressesExcludedFromRewards[owner()] = true;
@@ -70,7 +74,7 @@ contract Maka is MakaBase {
 		_addressesExcludedFromRewards[address(0)] = true;
 
 		// If someone sends or receives more than 15% of their balance in a transaction, their reward cycle date will increase accordingly
-		setRewardCycleExtensionThreshold(15);
+		setRewardCycleExtensionThreshold(25);
 	}
 
 
@@ -81,7 +85,7 @@ contract Maka is MakaBase {
 		setRewardAsTokensEnabled(true);
 		setAutoClaimEnabled(true);
 		setReimburseAfterMakaClaimFailure(true);
-		setMinRewardBalance(5000 * 10**decimals());  //At least 5000 tokens are required to be eligible for rewards
+		setMinRewardBalance(100000 * 10**decimals());  //At least 100000 tokens are required to be eligible for rewards
 		setGradualBurnMagnitude(1); //Buy tokens using 0.01% of reward pool and burn them
 		_lastBurnDate = block.timestamp;
 	}
@@ -186,30 +190,38 @@ contract Maka is MakaBase {
 		// Update the next claim date & the total amount claimed
 		_nextAvailableClaimDate[user] = block.timestamp + rewardCyclePeriod();
 
-		(uint256 claimBnb, uint256 claimBnbAsTokens) = calculateClaimRewards(user);
+		(uint256 claimBnbRewards, uint256 claimBusdRewards, uint256 claimMakaRewards) = calculateClaimRewards(user);
 
 		bool tokenClaimSuccess = true;
         // Claim MAKA tokens
-		if (!claimMaka(user, claimBnbAsTokens)) {
+		if (!claimMaka(user, claimMakaRewards)) {
 			// If token claim fails for any reason, award whole portion as BNB
 			if (_reimburseAfterMakaClaimFailure) {
-				claimBnb += claimBnbAsTokens;
+				claimBnbRewards += claimMakaRewards;
 			} else {
 				tokenClaimSuccess = false;
 			}
 
-			claimBnbAsTokens = 0;
+			claimMakaRewards = 0;
+		}
+		
+		// Claim BUSD tokens
+		bool busdClaimSuccess = true;
+		if (!claimBusd(user, claimBusdRewards)) {
+			claimBnbRewards += claimBusdRewards;
+			claimBusdRewards = 0;
+			busdClaimSuccess = false;
 		}
 
 		// Claim BNB
-		bool bnbClaimSuccess = claimBNB(user, claimBnb);
+		bool bnbClaimSuccess = claimBNB(user, claimBnbRewards);
 
 		// Fire the event in case something was claimed
-		if (tokenClaimSuccess || bnbClaimSuccess) {
-			emit RewardClaimed(user, claimBnb, claimBnbAsTokens, _nextAvailableClaimDate[user]);
+		if (tokenClaimSuccess || busdClaimSuccess || bnbClaimSuccess) {
+			emit RewardClaimed(user, claimBnbRewards, claimBusdRewards, claimMakaRewards, _nextAvailableClaimDate[user]);
 		}
 		
-		return bnbClaimSuccess && tokenClaimSuccess;
+		return bnbClaimSuccess && busdClaimSuccess && tokenClaimSuccess;
 	}
 
 
@@ -250,6 +262,21 @@ contract Maka is MakaBase {
 
 		_bnbAsMakaClaimed[user] += bnbAmount;
 		_totalBNBAsMakaClaimed += bnbAmount;
+		return true;
+	}
+	
+	function claimBusd(address user, uint256 bnbAmount) private returns (bool) {
+		if (bnbAmount == 0) {
+			return true;
+		}
+
+		bool success = swapBNBForBusd(bnbAmount, user);
+		if (!success) {
+			return false;
+		}
+
+		_bnbAsBusdClaimed[user] += bnbAmount;
+		_totalBNBAsBusdClaimed += bnbAmount;
 		return true;
 	}
 
@@ -358,18 +385,17 @@ contract Maka is MakaBase {
 	}
 
 
-	function calculateClaimRewards(address ofAddress) public view returns (uint256, uint256) {
+	function calculateClaimRewards(address ofAddress) public view returns (uint256, uint256, uint256) {
 		uint256 reward = calculateBNBReward(ofAddress);
+        uint256 percentageBnb = _claimRewardAsBnbPercentage[ofAddress];
+        uint256 percentageBusd = _claimRewardAsBusdPercentage[ofAddress];
+        uint256 percentageMaka = _claimRewardAsMakaPercentage[ofAddress];
+        
+		uint256 claimBnbRewards = reward * percentageBnb / 100;
+        uint256 claimBusdRewards = reward * percentageBusd / 100;
+		uint256 claimMakaRewards = reward * percentageMaka / 100;
 
-		uint256 claimBnbAsTokens = 0;
-		if (_rewardAsTokensEnabled) {
-			uint256 percentage = _claimRewardAsTokensPercentage[ofAddress];
-			claimBnbAsTokens = reward * percentage / 100;
-		} 
-
-		uint256 claimBnb = reward - claimBnbAsTokens;
-
-		return (claimBnb, claimBnbAsTokens);
+		return (claimBnbRewards, claimBusdRewards, claimMakaRewards);
 	}
 
 
@@ -461,7 +487,11 @@ contract Maka is MakaBase {
 	}
 
 
-    function bnbRewardClaimedAsMaka(address byAddress) public view returns (uint256) {
+    function bnbRewardClaimedAsBusd(address byAddress) public view returns (uint256) {
+		return _bnbAsBusdClaimed[byAddress];
+	}
+	
+	function bnbRewardClaimedAsMaka(address byAddress) public view returns (uint256) {
 		return _bnbAsMakaClaimed[byAddress];
 	}
 
@@ -473,6 +503,10 @@ contract Maka is MakaBase {
 
     function totalBNBClaimedAsMaka() public view returns (uint256) {
 		return _totalBNBAsMakaClaimed;
+	}
+	
+	  function totalBNBClaimedAsBusd() public view returns (uint256) {
+		return _totalBNBAsBusdClaimed;
 	}
 
 
@@ -613,16 +647,26 @@ contract Maka is MakaBase {
 		require(amount > 0, "Amount must be greater than zero");
 		_minBnbPoolSizeBeforeBurn = amount;
 	}
-
-
-	function claimRewardAsTokensPercentage(address ofAddress) public view returns(uint256) {
-		return _claimRewardAsTokensPercentage[ofAddress];
+	
+	function claimRewardAsBnbPercentage(address ofAddress) public view returns(uint256) {
+		return _claimRewardAsBnbPercentage[ofAddress];
+	}
+	
+	function claimRewardAsBusdPercentage(address ofAddress) public view returns(uint256) {
+		return _claimRewardAsBusdPercentage[ofAddress];
 	}
 
 
-	function setClaimRewardAsTokensPercentage(uint256 percentage) public {
-		require(percentage <= 100, "Cannot exceed 100%");
-		_claimRewardAsTokensPercentage[msg.sender] = percentage;
+	function claimRewardAsMakaPercentage(address ofAddress) public view returns(uint256) {
+		return _claimRewardAsMakaPercentage[ofAddress];
+	}
+
+
+	function setClaimRewardPercentage(uint256 percentageBnb, uint256 percentageBusd, uint256 percentageMaka) public {
+		require((percentageBnb + percentageBusd + percentageMaka) == 100, "Sum is not 100%");
+		_claimRewardAsBnbPercentage[msg.sender] = percentageBnb;
+		_claimRewardAsBusdPercentage[msg.sender] = percentageBusd;
+		_claimRewardAsMakaPercentage[msg.sender] = percentageMaka;
 	}
 
 

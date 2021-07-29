@@ -1,6 +1,5 @@
-// File: PancakeRouter.sol
-
 // SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.5;
 
 interface IPancakeRouter01 {
@@ -97,9 +96,6 @@ interface IPancakeRouter01 {
     function getAmountsIn(uint amountOut, address[] calldata path) external view returns (uint[] memory amounts);
 }
 
-// File: contracts\base\token\ERC20\PancakeSwap\IPancakeRouter02.sol
-
-
 interface IPancakeRouter02 is IPancakeRouter01 {
     function removeLiquidityETHSupportingFeeOnTransferTokens(
         address token,
@@ -140,9 +136,6 @@ interface IPancakeRouter02 is IPancakeRouter01 {
         uint deadline
     ) external;
 }
-
-// File: contracts\base\token\ERC20\PancakeSwap\IPancakeFactory.sol
-
 
 interface IPancakeFactory {
     event PairCreated(address indexed token0, address indexed token1, address pair, uint);

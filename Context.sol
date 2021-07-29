@@ -1,7 +1,7 @@
-// File: Context.sol
-
 // SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.5;
+
 /*
  * @dev Provides information about the current execution context, including the
  * sender of the transaction and its data. While these are generally available
@@ -22,8 +22,6 @@ abstract contract Context {
         return msg.data;
     }
 }
-
-// File: contracts\base\access\Ownable.sol
 
 /**
  * @dev Contract module which provides a basic access control mechanism, where

@@ -1,5 +1,3 @@
-// File: MakaBase.sol
-
 // SPDX-License-Identifier: MIT
 
 pragma solidity 0.8.5;
@@ -8,7 +6,6 @@ import "./ERC20.sol";
 import "./Context.sol";
 import "./PancakeRouter.sol";
 import "./ReentrancyGuard.sol";
-import "./MakaBase.sol";
 
 // Base class that implements: BEP20 interface, fees & swaps
 abstract contract MakaBase is Context, IERC20Metadata, Ownable, ReentrancyGuard {
@@ -43,24 +40,33 @@ abstract contract MakaBase is Context, IERC20Metadata, Ownable, ReentrancyGuard 
 	address private _pancakeSwapRouterAddress;
 	IPancakeRouter02 private _pancakeswapV2Router;
 	address private _pancakeswapV2Pair;
-	address private _autoLiquidityWallet;
+	address private _autoLiquidityWallet; 
+	
+	// ADDRESSES
+    // BUSD MAINNET: 0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56
+    // BUSD TESTNET: 0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7
+    address BUSD;
 
 	// EVENTS
 	event Swapped(uint256 tokensSwapped, uint256 bnbReceived, uint256 tokensIntoLiqudity, uint256 bnbIntoLiquidity);
-
-
-	constructor (address routerAddress) {
+    
+    //Router MAINNET: 0x10ed43c718714eb63d5aa57b78b54704e256024e
+    //Router TESTNET: 0xD99D1c33F9fC3444f8101754aBC46c52416550D1 || other 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3
+    //Factory testnet: 0x6725F303b657a9451d8BA641348b6761A6CC7a17
+	constructor (address routerAddress, address busdAddr) {
 		_balances[_msgSender()] = totalSupply();
+		
+		BUSD = busdAddr;
 		
 		// Exclude contract from fees
 		_addressesExcludedFromFees[address(this)] = true;
 
-		// Initialize PancakeSwap V2 router and Maka <-> BNB pair.  Router address will be: 0x10ed43c718714eb63d5aa57b78b54704e256024e or for testnet: 0xD99D1c33F9fC3444f8101754aBC46c52416550D1
+		// Initialize PancakeSwap V2 router and Maka <-> BNB pair.
 		setPancakeSwapRouter(routerAddress);
-
+        
 		// 5% liquidity fee, 11% reward fee, 2% additional sell fee
 		setFees(5, 11, 2);
-
+        
 		emit Transfer(address(0), _msgSender(), totalSupply());
 	}
 
@@ -82,8 +88,7 @@ abstract contract MakaBase is Context, IERC20Metadata, Ownable, ReentrancyGuard 
 
 
 	function onActivated() internal virtual { }
-
-
+    
 	function balanceOf(address account) public view override returns (uint256) {
 		return _balances[account];
 	}
@@ -182,8 +187,7 @@ abstract contract MakaBase is Context, IERC20Metadata, Ownable, ReentrancyGuard 
 
 		return 0;
 	}
-
-	
+    
 	function executeSwapIfNeeded(address sender, address recipient) private {
 		if (!isMarketTransfer(sender, recipient)) {
 			return;
@@ -203,7 +207,6 @@ abstract contract MakaBase is Context, IERC20Metadata, Ownable, ReentrancyGuard 
 			}
 		}
 	}
-
 
 	function executeSwap(uint256 amount) private {
 		// Allow pancakeSwap to spend the tokens of the address
@@ -255,6 +258,21 @@ abstract contract MakaBase is Context, IERC20Metadata, Ownable, ReentrancyGuard 
 		path[0] = _pancakeswapV2Router.WETH();
 		path[1] = address(this);
 
+
+		// Swap and send the tokens to the 'to' address
+		try _pancakeswapV2Router.swapExactETHForTokensSupportingFeeOnTransferTokens{ value: bnbAmount }(0, path, to, block.timestamp + 360) { 
+			return true;
+		} 
+		catch { 
+			return false;
+		}
+	}
+	
+	function swapBNBForBusd(uint256 bnbAmount, address to) internal returns(bool) { 
+		// Generate pair for WBNB -> BUSD
+		address[] memory path = new address[](2);
+		path[0] = _pancakeswapV2Router.WETH();
+		path[1] = address(BUSD);
 
 		// Swap and send the tokens to the 'to' address
 		try _pancakeswapV2Router.swapExactETHForTokensSupportingFeeOnTransferTokens{ value: bnbAmount }(0, path, to, block.timestamp + 360) { 
